@@ -3,6 +3,7 @@
 -- film - film_catogory - category
 -- Business logic: Find all movies in the Animation category, released in the specified time range, with rental rate higher than 1 , and display them in alphabetical order by title.
 
+SET search_path TO public; 
 
 
 -- Using INNER JOINs
@@ -10,42 +11,42 @@
 -- It clearly shows the relationships between tables and is generally the fastest execution method.
 
 SELECT 
-	f.title 
+	film.title 
 FROM 
-	film f
+	film
 	-- joins the 'film_category' table to connect films with their categories
-	INNER JOIN film_category fc ON f.film_id=fc.film_id
+	INNER JOIN film_category AS film_cat ON film.film_id=film_cat.film_id
 	-- joins the 'category' table to filter by category name
-	INNER JOIN category c ON c.category_id=fc.category_id
+	INNER JOIN category AS cat ON film_cat.category_id=cat.category_id
 	-- filters for movies released between 2017 and 2019
 WHERE 
-	f.release_year BETWEEN 2017 AND 2019
+	film.release_year BETWEEN 2017 AND 2019 AND
 	-- ensures only 'Animation' category movies are selected
-	AND c.name='Animation'
+	UPPER(cat.name)='ANIMATION' AND
 	-- filters only for movies with the specified ratings
-	AND f.rental_rate > 1
+	film.rental_rate > 1
 	-- sorts the result alphabetically by movie title
-ORDER BY f.title;
+ORDER BY film.title;
 
 
 -- Solution 2: Using EXISTS with correlated subquery
 --I chose this approach to demonstrate an alternative method that works well when checking if a record exists.This can be beneficial for complex filtering conditions.
 SELECT 
-	f.title
+	film.title
 FROM 
-	film f 
+	film
 WHERE	
 	EXISTS (--using exists to check if the film has a corresponding category-animation 
     	SELECT 1
-    	FROM film_category fc
-	    INNER JOIN category c ON c.category_id = fc.category_id
-	    WHERE fc.film_id = f.film_id  -- Match the film's ID with the one in 'film_category'
-	    AND c.name = 'Animation'
-	) 
-	AND f.release_year BETWEEN 2017 AND 2019 -- filter films  released btween 2017 and 2019
-	AND f.rental_rate > 1 -- filter films with rental_rate more than 1
+    	FROM film_category AS film_cat
+	    INNER JOIN category AS cat ON cat.category_id = film_cat.category_id
+	    WHERE film_cat.film_id = film.film_id AND -- Match the film's ID with the one in 'film_category'
+	    UPPER(cat.name) = 'ANIMATION'
+	) AND
+	film.release_year BETWEEN 2017 AND 2019 AND-- filter films  released btween 2017 and 2019
+	film.rental_rate > 1 -- filter films with rental_rate more than 1
 ORDER BY 	
-	f.title; -- order result alphabetically
+	film.title; -- order result alphabetically
 
 
 -- Solution 3: Using CTE (Common Table Expression)
@@ -53,77 +54,82 @@ ORDER BY
 --define CTE to filter films in the animation cateogory
 WITH animation_films AS (
     SELECT 	
-		f.film_id
+		film.film_id
     FROM 
-		film f
-	    INNER JOIN film_category fc ON f.film_id = fc.film_id
-	    INNER JOIN category c ON c.category_id = fc.category_id
+		film
+	    INNER JOIN film_category AS film_cat ON film.film_id = film_cat.film_id
+	    INNER JOIN category AS cat ON cat.category_id = film_cat.category_id
     WHERE 
-        c.name = 'Animation'  -- Filter to only include films in the 'Animation' category
+        UPPER(cat.name) = 'ANIMATION'  -- Filter to only include films in the 'Animation' category
 )
 --Main query to fetch titles of animation films meeting additional criteria
 SELECT 
-    f.title
+    film.title
 FROM 
-    film f
-    INNER JOIN animation_films af ON f.film_id = af.film_id
+    film
+    INNER JOIN animation_films AS animations ON film.film_id = animations.film_id
 WHERE 
-    f.release_year BETWEEN 2017 AND 2019 --filter films by years 
-    AND f.rental_rate > 1 -- filter films by rental_rate more than 1 
+    film.release_year BETWEEN 2017 AND 2019 AND --filter films by years 
+    film.rental_rate > 1 -- filter films by rental_rate more than 1 
 ORDER BY 
-    f.title; -- order the resutl alpabetically
+    film.title; -- order the resutl alpabetically
 
 
 -- 2.The revenue earned by each rental store after March 2017 (columns: address and address2 – as one column, revenue)
 -- The goal of this query is to calculate the revenue earned by each rental store after March 2017. cosolidate address and address2 as one column, and calcuate total revenue from the payment.
+-- left join are used to ensure that all payment records are inculeded, even some rental or inventory data are missing.
+-- If our data integrity guarantees that every payment has a matching rental, inventory, and store record, then we could replace these with INNER JOINs.
 
 SELECT 
-    CONCAT(a.address, ', ', a.address2) AS store_address,
-    SUM(p.amount) AS revenue --calculate total revenue by summing up the payment_amounts
-FROM payment p
-LEFT JOIN rental r ON p.rental_id = r.rental_id -- Join payment with rental to connect the payment with the rental
-LEFT JOIN inventory i ON r.inventory_id = i.inventory_id -- Join rental with inventory to get the related store
-LEFT JOIN store s ON i.store_id = s.store_id  -- Join inventory with store to associate the rental with the store
-LEFT JOIN address a ON s.address_id = a.address_id -- Join store with address to get the store's address
-WHERE p.payment_date > '2017-03-31' --Filter to include only payments made after March 31, 2017
-GROUP BY store_address -- Group the results by the store's address
-ORDER BY revenue DESC; -- Order the results by revenue in descending order
-
+    CONCAT(addr.address, ', ', addr.address2) AS store_address,
+    SUM(pay.amount) AS total_amount -- Calculate total revenue by summing up the payment amounts
+FROM payment AS pay
+-- Join payment with rental to connect the payment with the rental
+LEFT JOIN rental AS rent ON pay.rental_id = rent.rental_id
+-- Join rental with inventory to get the related store
+LEFT JOIN inventory AS inv ON rent.inventory_id = inv.inventory_id
+-- Join inventory with store to associate the rental with the store
+LEFT JOIN store AS st ON inv.store_id = st.store_id  
+-- Join store with address to get the store's address
+LEFT JOIN address AS addr ON st.address_id = addr.address_id
+WHERE pay.payment_date >= '2017-04-01' -- Filter to include only payments made after March 31, 2017
+GROUP BY addr.address_id -- Group by the store's address components
+ORDER BY total_amount DESC; -- Order the results by revenue in descending order
 
 -- CTE,  I chooe this approach because of better structure, and maintainability and readeble. also improved perfomance
 -- also imrpved perfomace, because CTE avoids edundant calculations by computing the revenue once. 
 WITH StoreRevenue AS (
     -- This CTE calculates total revenue per store after March 2017
     SELECT 
-        i.store_id,
-        SUM(p.amount) AS total_revenue
-    FROM payment p
-    LEFT JOIN rental r ON p.rental_id = r.rental_id
-    LEFT JOIN inventory i ON r.inventory_id = i.inventory_id
-    WHERE p.payment_date > '2017-03-31' -- Filtering payments after March 2017
-    GROUP BY i.store_id
+        inv.store_id,
+        SUM(pay.amount) AS total_amount
+    FROM payment pay
+    LEFT JOIN rental rent ON pay.rental_id = rent.rental_id
+    LEFT JOIN inventory inv ON rent.inventory_id = inv.inventory_id
+	WHERE pay.payment_date >= '2017-04-01' -- Filter to include only payments made after March 31, 2017
+    GROUP BY inv.store_id
 )
 SELECT 
-    CONCAT(a.address, ', ', COALESCE(a.address2, '')) AS store_address, -- Combine address fields
-    sr.total_revenue AS revenue
-FROM StoreRevenue sr
-LEFT JOIN store s ON sr.store_id = s.store_id
-LEFT JOIN address a ON s.address_id = a.address_id
+    CONCAT(addr.address, ', ', COALESCE(addr.address2, '')) AS store_address, -- Combine address fields
+    store_rev.total_amount AS revenue  
+FROM StoreRevenue AS store_rev
+LEFT JOIN store st ON store_rev.store_id = st.store_id
+LEFT JOIN address addr ON st.address_id = addr.address_id
 ORDER BY revenue DESC;
 
 -- Subquery
 --less code if it used once and more flexible.
 SELECT 
-    CONCAT(a.address, ', ', COALESCE(a.address2, '')) AS store_address, -- Combine address fields
-    (SELECT SUM(p.amount) 
-     FROM payment p
-     LEFT JOIN rental r ON p.rental_id = r.rental_id
-     LEFT JOIN inventory i ON r.inventory_id = i.inventory_id
-     WHERE i.store_id = s.store_id 
-     AND p.payment_date > '2017-03-31' -- Filter payments after March 2017
+    CONCAT(addr.address, ', ', COALESCE(addr.address2, '')) AS store_address, -- Combine address fields
+    (SELECT SUM(pay.amount) 
+     FROM payment pay
+     LEFT JOIN rental rent ON pay.rental_id = rent.rental_id
+     LEFT JOIN inventory inv ON rent.inventory_id = inv.inventory_id
+     WHERE inv.store_id = st.store_id 
+     AND pay.payment_date >= '2017-04-01' -- Filter payments after March 2017
     ) AS revenue
-FROM store s
-LEFT JOIN address a ON s.address_id = a.address_id
+FROM store st
+LEFT JOIN address addr ON st.address_id = addr.address_id
 ORDER BY revenue DESC;
 
 
@@ -135,15 +141,15 @@ ORDER BY revenue DESC;
 -- Using direct join and group by
 -- This approach is simple, efficient and fast, no need for subquertis and CTEs.
 SELECT 
-    a.first_name,
-    a.last_name,   
-    COUNT(fa.film_id) AS number_of_movies  -- Count the number of movies each actor participated in
-FROM actor a
-JOIN film_actor fa ON a.actor_id = fa.actor_id  -- Join actor table with film_actor to associate actors with movies
-JOIN film f ON fa.film_id = f.film_id  -- Join with film table to access the movie release year
-WHERE f.release_year > 2015  -- Filter to include only movies released after 2015
-GROUP BY a.actor_id, a.first_name, a.last_name  -- Group by actor to calculate total number of movies for each actor
-ORDER BY number_of_movies DESC  -- Sort by the number of movies in descending order to get the top actors
+    actor.first_name,
+    actor.last_name,   
+    COUNT(film_actor.film_id) AS number_of_films  -- Count the number of movies each actor participated in
+FROM actor
+INNER JOIN film_actor ON actor.actor_id = film_actor.actor_id  -- Join actor table with film_actor to associate actors with movies
+INNER JOIN film ON film_actor.film_id = film.film_id  -- Join with film table to access the movie release year
+WHERE film.release_year > 2015  -- Filter to include only movies released after 2015
+GROUP BY actor.actor_id -- Group by actor to calculate total number of movies for each actor
+ORDER BY number_of_films DESC  -- Sort by the number of movies in descending order to get the top actors
 LIMIT 5;  -- Limit to top 5 actors based on the number of movies they acted in
 
 
@@ -155,30 +161,30 @@ WITH ActorMovieCount AS (
     -- Count movies per actor for films released after 2015
     SELECT 
         fa.actor_id,
-        COUNT(fa.film_id) AS number_of_movies
+        COUNT(fa.film_id) AS number_of_films
     FROM film_actor fa
-    LEFT JOIN film f ON fa.film_id = f.film_id
-    WHERE f.release_year > 2015 -- Filter only movies released after 2015
+    LEFT JOIN film ON fa.film_id = film.film_id
+    WHERE film.release_year > 2015 -- Filter only movies released after 2015
     GROUP BY fa.actor_id
 )
 SELECT 
-    a.first_name, 
-    a.last_name, 
-    amc.number_of_movies
-FROM ActorMovieCount amc
-LEFT JOIN actor a ON amc.actor_id = a.actor_id
-ORDER BY amc.number_of_movies DESC
+    act.first_name, 
+    act.last_name, 
+    counted_movies.number_of_films
+FROM ActorMovieCount as counted_movies
+LEFT JOIN actor act ON counted_movies.actor_id = act.actor_id
+ORDER BY counted_movies.number_of_films DESC
 LIMIT 5; -- Get only the top 5 actors
 SELECT 
-    a.first_name, 
-    a.last_name, 
+    act.first_name, 
+    act.last_name, 
     (SELECT COUNT(fa.film_id)
      FROM film_actor fa
-     LEFT JOIN film f ON fa.film_id = f.film_id
-     WHERE fa.actor_id = a.actor_id
-     AND f.release_year > 2015
+     LEFT JOIN film ON fa.film_id = film.film_id
+     WHERE fa.actor_id = act.actor_id
+     AND film.release_year > 2015
     ) AS number_of_movies
-FROM actor a
+FROM actor act
 ORDER BY number_of_movies DESC
 LIMIT 5;
 
@@ -195,35 +201,35 @@ LIMIT 5;
 --ensures that if category has null, it replaces it with 0
 --using left join ensures that all movies are included
 SELECT 
-    f.release_year,
-    COALESCE(SUM(CASE WHEN c.name = 'Drama' THEN 1 ELSE 0 END), 0) AS number_of_drama_movies,
-    COALESCE(SUM(CASE WHEN c.name = 'Travel' THEN 1 ELSE 0 END), 0) AS number_of_travel_movies,
-    COALESCE(SUM(CASE WHEN c.name = 'Documentary' THEN 1 ELSE 0 END), 0) AS number_of_documentary_movies
-FROM film f
-LEFT JOIN film_category fc ON f.film_id = fc.film_id
-LEFT JOIN category c ON fc.category_id = c.category_id
-WHERE c.name IN ('Drama', 'Travel', 'Documentary') -- Filter only required categories
-GROUP BY f.release_year
-ORDER BY f.release_year DESC;
+    film.release_year,
+    COALESCE(SUM(CASE WHEN UPPER(cat.name) = 'DRAMA' THEN 1 ELSE 0 END), 0) AS number_of_drama_movies,
+    COALESCE(SUM(CASE WHEN UPPER(cat.name) = 'TRAVEL' THEN 1 ELSE 0 END), 0) AS number_of_travel_movies,
+    COALESCE(SUM(CASE WHEN UPPER(cat.name) = 'DOCUMENTARY' THEN 1 ELSE 0 END), 0) AS number_of_documentary_movies
+FROM film
+LEFT JOIN film_category AS film_cat ON film.film_id = film_cat.film_id
+LEFT JOIN category AS cat ON film_cat.category_id = cat.category_id
+WHERE UPPER(cat.name) IN ('DRAMA', 'TRAVEL', 'DOCUMENTARY') -- Filter only required categories
+GROUP BY film.release_year -- sorts the results by release year in descending order.
+ORDER BY film.release_year DESC;
 
 -- using subqery and count function
 -- using filter where contiion sytanx is clean and ingnores null values automatically.
 SELECT 
     sub.release_year,-- The year in which the movie was released
 	---- Count movies for each category
-    COUNT(*) FILTER (WHERE sub.category = 'Drama') AS number_of_drama_movies,
-    COUNT(*) FILTER (WHERE sub.category = 'Travel') AS number_of_travel_movies,
-    COUNT(*) FILTER (WHERE sub.category = 'Documentary') AS number_of_documentary_movies
+    COUNT(*) FILTER (WHERE LOWER(sub.category) = 'drama') AS number_of_drama_movies,
+    COUNT(*) FILTER (WHERE LOWER(sub.category) = 'travel') AS number_of_travel_movies,
+    COUNT(*) FILTER (WHERE LOWER(sub.category) = 'documentary') AS number_of_documentary_movies
 FROM (
     -- Subquery to retrieve the release year and category of films
     SELECT 
-        f.release_year,
-        c.name AS category
-    FROM film f
+        film.release_year,
+        cat.name AS category
+    FROM film
 	-- Join to associate each film with its category
-    LEFT JOIN film_category fc ON f.film_id = fc.film_id
-    LEFT JOIN category c ON fc.category_id = c.category_id
-    WHERE c.name IN ('Drama', 'Travel', 'Documentary') -- Filter only relevant categories
+    LEFT JOIN film_category filmcat ON film.film_id = filmcat.film_id
+    LEFT JOIN category cat ON filmcat.category_id = cat.category_id
+    WHERE LOWER(cat.name) IN ('drama', 'travel', 'documentary') -- Filter only relevant categories
 ) AS sub
 GROUP BY sub.release_year -- Group the results by release year to aggregate category counts per year
 ORDER BY sub.release_year DESC;-- Order the results in descending order of release year (latest movies first)
@@ -234,84 +240,92 @@ ORDER BY sub.release_year DESC;-- Order the results in descending order of relea
 
 WITH categorized_movies AS (
     SELECT 
-        f.release_year,
-        c.name AS category
-    FROM film f
-    LEFT JOIN film_category fc ON f.film_id = fc.film_id
-    LEFT JOIN category c ON fc.category_id = c.category_id
-    WHERE c.name IN ('Drama', 'Travel', 'Documentary') -- Filter required categories
+        film.release_year,
+        cat.name AS category
+    FROM film
+    LEFT JOIN film_category film_cat ON film.film_id = film_cat.film_id
+    LEFT JOIN category cat ON film_cat.category_id = cat.category_id
+    WHERE LOWER(cat.name) IN ('drama', 'travel', 'documentary') -- Filter required categories
 )
 SELECT 
-    cm.release_year,
-    COALESCE(SUM(CASE WHEN cm.category = 'Drama' THEN 1 ELSE 0 END), 0) AS number_of_drama_movies,
-    COALESCE(SUM(CASE WHEN cm.category = 'Travel' THEN 1 ELSE 0 END), 0) AS number_of_travel_movies,
-    COALESCE(SUM(CASE WHEN cm.category = 'Documentary' THEN 1 ELSE 0 END), 0) AS number_of_documentary_movies
-FROM categorized_movies cm
-GROUP BY cm.release_year
-ORDER BY cm.release_year DESC;
+    movie_data.release_year,
+    COALESCE(SUM(CASE WHEN LOWER(movie_data.category) = 'drama' THEN 1 ELSE 0 END), 0) AS number_of_drama_movies,
+    COALESCE(SUM(CASE WHEN LOWER(movie_data.category) = 'travel' THEN 1 ELSE 0 END), 0) AS number_of_travel_movies,
+    COALESCE(SUM(CASE WHEN LOWER(movie_data.category) = 'documentary' THEN 1 ELSE 0 END), 0) AS number_of_documentary_movies
+FROM categorized_movies movie_data
+GROUP BY movie_data.release_year
+ORDER BY movie_data.release_year DESC;
 
 --Part 2: Solve the following problems using SQL
 --1.Which three employees generated the most revenue in 2017? They should be awarded a bonus for their outstanding performance. 
 -- payment-staff-store
 --Business logic:The query aims to identify the top three employees who generated the most revenue in 2017 and determine the store where they last worked. The revenue is calculated by summing up the amount from the payment table where the staff_id matches and the payment date is in 2017. The last store is determined by identifying the most recent payment record for each employee. 
 
---using subeqery. I chose to use subqueries here because they offer a straightforward, modular approach to calculating total revenue and identifying the last store for each employee. They are easy to implement and provide a clear structure for the task at hand. 
-SELECT 
-    s.staff_id,
-    s.first_name,
-    s.last_name,
-    -- Get total revenue for each staff member in 2017
-    (SELECT SUM(p.amount)
-     FROM payment p
-     WHERE p.staff_id = s.staff_id
-       AND EXTRACT(YEAR FROM p.payment_date) = 2017) AS total_revenue,
-    -- Get last store where staff worked in 2017
-    (SELECT st.store_id
-     FROM payment p
-     JOIN staff st ON p.staff_id = st.staff_id
-     WHERE p.staff_id = s.staff_id
-       AND EXTRACT(YEAR FROM p.payment_date) = 2017
-     ORDER BY p.payment_date DESC, p.payment_id DESC
-     LIMIT 1) AS last_store
-FROM staff s
-WHERE s.staff_id IN (
-    -- Select top 3 employees based on revenue
-    SELECT p.staff_id
-    FROM payment p
-    WHERE EXTRACT(YEAR FROM p.payment_date) = 2017
-    GROUP BY p.staff_id
-    ORDER BY SUM(p.amount) DESC
-    LIMIT 3
+-- Step 1: Create a temporary table (CTE) that associates rentals with store locations
+WITH rental_store_mapping AS (
+    SELECT rental.rental_id, 
+           inventory.store_id
+    FROM public.rental
+    INNER JOIN public.inventory ON rental.inventory_id = inventory.inventory_id
+),
+-- Step 2: Identify the latest payment for each staff member in each store
+-- We filter payments from the year 2017 to reduce data size and improve performance.
+latest_payment_per_store AS (
+    SELECT payment.staff_id,
+           rental_store_mapping.store_id,
+           MAX(payment.payment_id) AS latest_payment_id, -- Get latest payment transaction ID
+           MAX(payment.payment_date) AS latest_payment_date -- Get latest payment date
+    FROM public.payment
+    INNER JOIN rental_store_mapping ON payment.rental_id = rental_store_mapping.rental_id
+    WHERE EXTRACT(YEAR FROM payment.payment_date) = 2017 -- Filter only 2017 data
+    GROUP BY payment.staff_id, rental_store_mapping.store_id
+),
+-- Step 3: Identify the latest payment for each staff member across all stores
+-- This is done using a self-join to compare payment IDs within each staff group.
+latest_payment_per_staff AS (
+    SELECT *
+    FROM latest_payment_per_store latest
+    WHERE latest.latest_payment_id = (
+        SELECT MAX(inner_latest.latest_payment_id) 
+        FROM latest_payment_per_store inner_latest
+        WHERE latest.staff_id = inner_latest.staff_id
+        GROUP BY inner_latest.staff_id 
+    )
 )
-ORDER BY total_revenue DESC;
 
-
-
--- using CTE is a modular approch, seperates calculation of revenue and last store lookup, improves readability so each step is logically divided. and better perfomance for large datasets.
--- CTE to calculate total revenue per staff member in 2017 and their last payment date
+-- Step 4: Calculate the total revenue per staff member for 2017
+SELECT staff.first_name,
+       staff.last_name,
+       latest_payment_per_staff.store_id,
+       SUM(payment.amount) AS payment
+FROM public.payment
+INNER JOIN public.staff ON payment.staff_id = staff.staff_id
+INNER JOIN latest_payment_per_staff ON payment.staff_id = latest_payment_per_staff.staff_id
+GROUP BY staff.staff_id, latest_payment_per_staff.store_id;
+-- Step 5: Retrieve the top 3 staff members based on revenue
 WITH StaffRevenue AS (
     SELECT 
-        s.staff_id,  
-        s.first_name,  
-        s.last_name,  
-        SUM(p.amount) AS total_revenue,  
-        MAX(p.payment_date) AS last_payment_date
-    FROM staff s
-    JOIN payment p ON s.staff_id = p.staff_id  
-    WHERE EXTRACT(YEAR FROM p.payment_date) = 2017
-    GROUP BY s.staff_id, s.first_name, s.last_name
+        staff.staff_id,  
+        staff.first_name,  
+        staff.last_name,  
+        SUM(payment.amount) AS total_payment,  -- Calculate total revenue per staff
+        MAX(payment.payment_date) AS last_payment_date -- Get last payment date
+    FROM public.staff
+    INNER JOIN public.payment ON staff.staff_id = payment.staff_id  
+    WHERE EXTRACT(YEAR FROM payment.payment_date) = 2017 -- Filter payments for 2017
+    GROUP BY staff.staff_id, staff.first_name, staff.last_name
 )
--- Retrieve the last store the employee worked at by joining with staff table
+-- Step 6: Identify the last store each employee worked in
 SELECT 
-    sr.staff_id,
-    sr.first_name,
-    sr.last_name,
-    sr.total_revenue,
-    s.store_id AS last_store -- Get store_id from staff table
-FROM StaffRevenue sr
-JOIN staff s ON sr.staff_id = s.staff_id
-ORDER BY sr.total_revenue DESC
-LIMIT 3;
+    StaffRevenue.staff_id,
+    StaffRevenue.first_name,
+    StaffRevenue.last_name,
+    StaffRevenue.total_payment,
+    staff.store_id AS last_store -- Store ID retrieved from staff table
+FROM StaffRevenue
+INNER JOIN public.staff ON StaffRevenue.staff_id = staff.staff_id
+ORDER BY StaffRevenue.total_payment DESC
+LIMIT 3; -- Return only the top 3 employees with the highest revenue
 
 
 -- 2. Which 5 movies were rented more than others (number of rentals), and what's the expected age of the audience for these movies? To determine expected age please use 'Motion Picture Association film rating system
@@ -330,33 +344,33 @@ LIMIT 3;
 WITH MovieRentals AS (
     -- Count the number of rentals per movie by joining film -> inventory -> rental
     SELECT 
-        f.film_id,
-        f.title,
-        COUNT(r.rental_id) AS rental_count,  -- Number of times this film was rented
-        f.rating -- Get the film rating (MPAA rating)
-    FROM film f
+        film.film_id,
+        film.title,
+        COUNT(rent.rental_id) AS rental_count,  -- Number of times this film was rented
+        film.rating -- Get the film rating (MPAA rating)
+    FROM film
     -- Join inventory to connect rentals to films
-    JOIN inventory i ON f.film_id = i.film_id
+    INNER JOIN inventory inv ON film.film_id = inv.film_id
     -- Joining the rental table to count how many times a film was rented
-    JOIN rental r ON i.inventory_id = r.inventory_id
-    GROUP BY f.film_id, f.title, f.rating
+    INNER JOIN rental rent ON inv.inventory_id = rent.inventory_id
+    GROUP BY film.film_id
 )
 -- Get the top 5 movies by rental count and the expected audience age
 SELECT 
-    mr.title,
-    mr.rental_count,
-    mr.rating,
+    rental_data.title,
+    rental_data.rental_count,
+    rental_data.rating,
     CASE 
 		--cases for each type of MPAA rating
-        WHEN mr.rating = 'G' THEN 'Everyone'
-        WHEN mr.rating = 'PG' THEN '5+'
-        WHEN mr.rating = 'PG-13' THEN '13+'
-        WHEN mr.rating = 'R' THEN '17+'
-        WHEN mr.rating = 'NC-17' THEN '18+'
+        WHEN rental_data.rating = 'G' THEN 'Everyone'
+        WHEN rental_data.rating = 'PG' THEN 'Parental Guidance'
+        WHEN rental_data.rating = 'PG-13' THEN '13+'
+        WHEN rental_data.rating = 'R' THEN '17+'
+        WHEN rental_data.rating = 'NC-17' THEN '18+'
         ELSE 'Unknown'
     END AS expected_audience_age
-FROM MovieRentals mr
-ORDER BY mr.rental_count DESC -- sorting movies by rental numbers
+FROM MovieRentals as rental_data
+ORDER BY rental_data.rental_count DESC -- sorting movies by rental numbers
 LIMIT 5; --return only the top 5 most rented
 
 
@@ -364,25 +378,25 @@ LIMIT 5; --return only the top 5 most rented
 
 -- Direct approach -It is more simple and executes in one step.
 SELECT 
-    f.title,
-    f.rating,
-    COUNT(r.rental_id) AS rental_count,
+    film.title,
+    film.rating,
+    COUNT(rent.rental_id) AS rental_count,
     CASE 
-        WHEN f.rating = 'G' THEN 'All ages'
-        WHEN f.rating = 'PG' THEN '7+'
-        WHEN f.rating = 'PG-13' THEN '13+'
-        WHEN f.rating = 'R' THEN '17+'
-        WHEN f.rating = 'NC-17' THEN '18+'
+        WHEN film.rating = 'G' THEN 'All ages'
+        WHEN film.rating = 'PG' THEN 'Parental Guidance'
+        WHEN film.rating = 'PG-13' THEN '13+'
+        WHEN film.rating = 'R' THEN '17+'
+        WHEN film.rating = 'NC-17' THEN '18+'
         ELSE 'Unknown'
     END AS expected_audience_age
 FROM 
-    film f
-JOIN 
-    inventory i ON f.film_id = i.film_id
-JOIN 
-    rental r ON i.inventory_id = r.inventory_id
+    film
+INNER JOIN 
+    inventory inv ON film.film_id = inv.film_id
+INNER JOIN 
+    rental rent ON inv.inventory_id = rent.inventory_id
 GROUP BY 
-    f.film_id, f.title, f.rating
+    film.film_id
 ORDER BY 
     rental_count DESC
 LIMIT 5;
@@ -397,19 +411,17 @@ LIMIT 5;
 -- This query helps identify actors who have been inactive for the longest time.
 -- It calculates gap between their most  recent film and current year
 -- logic is straighforward 
-select * from film
-
 SELECT 
-    a.first_name,
-    a.last_name,
-    MAX(f.release_year) AS last_movie_year,   -- Get the most recent movie year for each actor
-    EXTRACT(YEAR FROM CURRENT_DATE) - MAX(f.release_year) AS years_since_last_movie 
-FROM actor a
-JOIN film_actor fa ON a.actor_id = fa.actor_id  -- Link actors to movies
-JOIN film f ON fa.film_id = f.film_id
-GROUP BY a.actor_id, a.first_name, a.last_name -- Group by actor to get their last movie
-ORDER BY years_since_last_movie DESC  -- Sort actors by longest inactivity period
-LIMIT 10; -- Shows the top 10 actors who haven't acted in the longest time
+    act.first_name,
+    act.last_name,
+    MAX(film.release_year) AS last_movie_year,  
+    EXTRACT(YEAR FROM CURRENT_DATE) - COALESCE(MAX(film.release_year), EXTRACT(YEAR FROM CURRENT_DATE)) AS years_since_last_movie 
+FROM actor act
+LEFT JOIN film_actor ON act.actor_id = film_actor.actor_id  
+LEFT JOIN film ON film_actor.film_id = film.film_id
+GROUP BY act.actor_id
+ORDER BY years_since_last_movie DESC 
+LIMIT 10;
 
 
 -- gaps between sequential films per each actor;
@@ -419,27 +431,27 @@ LIMIT 10; -- Shows the top 10 actors who haven't acted in the longest time
 WITH ActorMovies AS (
     -- Get all movie release years per actor
     SELECT 
-        a.actor_id,
-        a.first_name,
-        a.last_name,
-        f.release_year
-    FROM actor a
-    JOIN film_actor fa ON a.actor_id = fa.actor_id  -- Link actors to movies
-    JOIN film f ON fa.film_id = f.film_id
+        act.actor_id,
+        act.first_name,
+        act.last_name,
+        film.release_year
+    FROM actor act
+    INNER JOIN film_actor as film_act ON act.actor_id = film_act.actor_id  -- Link actors to movies
+    INNER JOIN film ON film_act.film_id = film.film_id
 ),
 ActorGaps AS (
     -- Self-join to find the next movie after the current one
     SELECT 
-        am1.actor_id,
-        am1.first_name,
-        am1.last_name,
-        am1.release_year AS movie_year,
-        MIN(am2.release_year) AS next_movie_year  -- Get the closest movie after the current one
-    FROM ActorMovies am1
-    LEFT JOIN ActorMovies am2 
-        ON am1.actor_id = am2.actor_id 
-        AND am2.release_year > am1.release_year  -- Ensure it's the next movie
-    GROUP BY am1.actor_id, am1.first_name, am1.last_name, am1.release_year
+        current_actor_movies.actor_id,
+        current_actor_movies.first_name,
+        current_actor_movies.last_name,
+        current_actor_movies.release_year AS movie_year,
+        MIN(next_actor_movies.release_year) AS next_movie_year  -- Get the closest movie after the current one
+    FROM ActorMovies AS current_actor_movies
+    LEFT JOIN ActorMovies AS next_actor_movies 
+        ON current_actor_movies.actor_id = next_actor_movies.actor_id 
+        AND next_actor_movies.release_year > current_actor_movies.release_year  -- Ensure it's the next movie
+    GROUP BY current_actor_movies.actor_id, current_actor_movies.first_name, current_actor_movies.last_name, current_actor_movies.release_year
 )
 -- Find the longest gap for each actor
 SELECT 
