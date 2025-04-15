@@ -1,0 +1,185 @@
+SELECT proname FROM pg_proc 
+JOIN pg_namespace ns ON pg_proc.pronamespace = ns.oid 
+WHERE ns.nspname = 'public';
+
+-- Task 6. Prepare answers to the following questions
+
+-- film_in_stock - This function takes an input of film_id and store_id and returns the inventory_ids of those available copie.
+
+--film_not_in_stock It returns the list of inventory_ids for a given film and store that are currently not in stock.
+
+--inventory_in_stock - The function checks if an inventory item is available for rent or not, based on whether it’s rented out or if the return date is missing and returns boolean value true or false.SELECT pg_get_functiondef('film_not_in_stock'::regproc);
+
+--get_customer_balance --This function provides the current balance, taking into account the rentals, late fees, and payments made by a customer up until the specified date.  it returns the balance by adding the total rental fees and late fees, and subtracting the total payments the customer has made.
+
+--inventory_held_by_customer returns the customer_id of the customer who is currently holding (renting) a particular inventory item (film) identified by the inventory_id.
+
+--rewards_report returns the customers who meet specfic criteria for reward eligibility based on their monthly purchase behavior. for example
+--SELECT * FROM public.rewards_report(5, 100);
+--This example returns a list of customers who have made at least 5 purchases and spent more than $100 in the past 3 months.
+
+
+--last_day return the last day of the month with given in put timestamp with the time zone.
+--This function is marked as IMMUTABLE, meaning it will always return the same result for the same input, and STRICT, meaning it will return NULL if the input is NULL.
+
+--2.Why does ‘rewards_report’ function return 0 rows? Correct and recreate the function, so that it's able to return rows properly.
+SELECT pg_get_functiondef('rewards_report'::regproc);
+DROP FUNCTION IF EXISTS public.rewards_report;
+CREATE OR REPLACE FUNCTION public.rewards_report(
+    min_monthly_purchases integer,
+    min_dollar_amount_purchased numeric
+)
+RETURNS SETOF customer
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+DECLARE
+    last_month_start DATE;
+    last_month_end DATE;
+    rr RECORD;
+    tmpSQL TEXT;
+    fake_today DATE := '2017-07-01';  -- Simulated "today" for the function
+BEGIN
+    /* Some sanity checks... */
+    IF min_monthly_purchases = 0 THEN
+        RAISE EXCEPTION 'Minimum monthly purchases parameter must be > 0';
+    END IF;
+    IF min_dollar_amount_purchased = 0.00 THEN
+        RAISE EXCEPTION 'Minimum monthly dollar amount purchased parameter must be > $0.00';
+    END IF;
+
+    -- Use fake_today instead of CURRENT_DATE
+    last_month_start := fake_today - INTERVAL '3 month';
+    last_month_start := to_date(
+        (extract(YEAR FROM last_month_start) || '-' || extract(MONTH FROM last_month_start) || '-01'),
+        'YYYY-MM-DD'
+    );
+    last_month_end := LAST_DAY(last_month_start);
+
+    /* Create a temporary storage area for Customer IDs. */
+    CREATE TEMPORARY TABLE tmpCustomer (customer_id INTEGER NOT NULL PRIMARY KEY);
+
+    /* Find all customers meeting the monthly purchase requirements */
+    tmpSQL := 'INSERT INTO tmpCustomer (customer_id)
+        SELECT p.customer_id
+        FROM payment AS p
+        WHERE DATE(p.payment_date) BETWEEN ' || quote_literal(last_month_start) || ' AND ' || quote_literal(last_month_end) || '
+        GROUP BY customer_id
+        HAVING SUM(p.amount) > ' || min_dollar_amount_purchased || '
+        AND COUNT(customer_id) > ' || min_monthly_purchases;
+
+    EXECUTE tmpSQL;
+
+    /* Output ALL customer information of matching rewardees. */
+    FOR rr IN EXECUTE 'SELECT c.* FROM tmpCustomer AS t INNER JOIN customer AS c ON t.customer_id = c.customer_id' LOOP
+        RETURN NEXT rr;
+    END LOOP;
+
+    /* Clean up */
+    tmpSQL := 'DROP TABLE tmpCustomer';
+    EXECUTE tmpSQL;
+
+    RETURN;
+END
+$function$;
+
+SELECT * FROM rewards_report(3, 20.00);
+-- Function was calculating the date relative to today , just using a fixed date, cause we dont have payments from this year. 
+
+
+--Is there any function that can potentially be removed from the dvd_rental codebase? If so, which one and why?
+-- _group_concat because it doesn't appear in the dependency list,  meaning no other database objects  directly reference it.
+SELECT pg_get_functiondef('get_customer_balance'::regproc);
+
+--* The ‘get_customer_balance’ function describes the business requirements for calculating the client balance. Unfortunately, not all of them are implemented in this function. Try to change function using the requirements from the comments.
+
+
+CREATE OR REPLACE FUNCTION public.get_customer_balance(p_customer_id INTEGER, p_effective_date TIMESTAMP WITH TIME ZONE)
+RETURNS NUMERIC
+LANGUAGE plpgsql
+AS $function$
+DECLARE
+    v_rentfees DECIMAL(10,2); -- Rental fees for all previous rentals
+    v_overfees DECIMAL(10,2); -- Late fees for prior rentals
+    v_payments DECIMAL(10,2); -- Sum of payments made previously
+    v_replacement_cost DECIMAL(10,2); -- Replacement cost for films overdue more than twice the rental duration
+BEGIN
+    -- Calculate the rental fees
+    SELECT COALESCE(SUM(film.rental_rate), 0) INTO v_rentfees
+    FROM film
+    JOIN inventory ON film.film_id = inventory.film_id
+    JOIN rental ON inventory.inventory_id = rental.inventory_id
+    WHERE rental.rental_date <= p_effective_date
+      AND rental.customer_id = p_customer_id;
+
+    -- Calculate the late fees (1 dollar per overdue day)
+    SELECT COALESCE(SUM(CASE 
+                           WHEN (rental.return_date - rental.rental_date) > (film.rental_duration * '1 day'::interval)
+                           THEN EXTRACT(epoch FROM ((rental.return_date - rental.rental_date) - (film.rental_duration * '1 day'::interval)))::INTEGER / 86400 -- 1 dollar per overdue day
+                           ELSE 0
+                        END), 0)
+    INTO v_overfees
+    FROM rental
+    JOIN inventory ON rental.inventory_id = inventory.inventory_id
+    JOIN film ON inventory.film_id = film.film_id
+    WHERE rental.rental_date <= p_effective_date
+      AND rental.customer_id = p_customer_id
+      AND rental.return_date <= p_effective_date;
+
+    -- Calculate the replacement cost for films overdue more than twice the rental duration
+    SELECT COALESCE(SUM(CASE 
+                           WHEN (rental.return_date - rental.rental_date) > (film.rental_duration * 2 * '1 day'::interval)
+                           THEN film.replacement_cost
+                           ELSE 0
+                        END), 0)
+    INTO v_replacement_cost
+    FROM rental
+    JOIN inventory ON rental.inventory_id = inventory.inventory_id
+    JOIN film ON inventory.film_id = film.film_id
+    WHERE rental.rental_date <= p_effective_date
+      AND rental.customer_id = p_customer_id
+      AND rental.return_date <= p_effective_date;
+
+    -- Calculate the total payments made by the customer before the effective date
+    SELECT COALESCE(SUM(payment.amount), 0) INTO v_payments
+    FROM payment
+    WHERE payment.payment_date <= p_effective_date
+      AND payment.customer_id = p_customer_id;
+
+    -- Return the calculated balance: rental fees + overdue fees + replacement cost - payments
+    RETURN v_rentfees + v_overfees + v_replacement_cost - v_payments;
+END
+$function$
+
+
+--* How do ‘group_concat’ and ‘_group_concat’ functions work? (database creation script might help) Where are they used?
+--_group_concat(text, text) is a SQL function that concatenates two text values with a comma and a space. It handles NULL values gracefully.
+--group_concat(text) is an aggregate built on top of _group_concat. It combines multiple row values into a single comma-separated string.
+--The group_concat aggregate is typically used in SELECT queries to concatenate column values across grouped rows.
+
+
+--* What does ‘last_updated’ function do? Where is it used?
+--it is used  to automatically update the last_update column of a table whenever a row is modified.
+--last updated is a trigger function which is used to automatically update row :
+--for example-- CREATE TRIGGER last_updated BEFORE UPDATE ON public.city FOR EACH ROW EXECUTE FUNCTION public.last_updated();
+--CREATE TRIGGER last_updated BEFORE UPDATE ON public.category FOR EACH ROW EXECUTE FUNCTION public.last_updated();
+--CREATE TRIGGER last_updated BEFORE UPDATE ON public.country FOR EACH ROW EXECUTE FUNCTION public.last_updated();
+--CREATE TRIGGER last_updated BEFORE UPDATE ON public.customer FOR EACH ROW EXECUTE FUNCTION public.last_updated();
+--CREATE TRIGGER last_updated BEFORE UPDATE ON public.film FOR EACH ROW EXECUTE FUNCTION public.last_updated();
+--CREATE TRIGGER last_updated BEFORE UPDATE ON public.film_actor FOR EACH ROW EXECUTE FUNCTION public.last_updated();
+--CREATE TRIGGER last_updated BEFORE UPDATE ON public.film_category FOR EACH ROW EXECUTE FUNCTION public.last_updated();
+
+
+--* What is tmpSQL variable for in ‘rewards_report’ function? Can this function be recreated without EXECUTE statement and dynamic SQL? Why?
+---tmpSQL is used for building SQL dynamically inside the rewards_report function.
+-- there are two versions of this function:Dynamic SQL is useful when the query structure is dynamic (changing based on parameters), but in this case, the second version achieves the same result without it, making it simpler and potentially more efficient.
+--The second version of the function using static SQL is cleaner, more efficient, and easier to maintain, especially for this use case.
+
+
+
+
+
+
+
+
+
