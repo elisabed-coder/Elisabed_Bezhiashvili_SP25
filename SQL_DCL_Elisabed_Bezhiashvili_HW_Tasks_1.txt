@@ -1,0 +1,20 @@
+-- Task 1. Figure out what security precautions are already used in your 'dvd_rental' database.  Prepare description
+-- It's about authentication and autrozation
+--in postgres user can be considered as role with login privilige. our database is basically protected with role
+--PostgreSQL secures the dvd_rental database through a combination of authentication mechanisms (configured in pg_hba.conf) and authorization controls
+SELECT grantee, privilege_type, table_name
+FROM information_schema.role_table_grants
+WHERE table_schema = 'public';
+-- 
+
+---- Check for user-defined roles
+SELECT rolname, rolsuper, rolinherit, rolcreaterole, rolcreatedb, rolcanlogin
+FROM pg_roles;
+There is a lot of rollanem like pg_database_owner, pg_read_all_data none of them are superuser except postgres which is rolsuperuser rolcreaterole rolcreatedb and rolcalogin true, all are inherit, 
+Only the postgres role has superuser privileges — all other roles are restricted and inherit permissions. there are other lots of roles but dont have permissions to create or update database. they all have inheritance(possibly automatically defined.) When all roles have inheritance, permission delegation through role membership is automatic and seamless — this is the standard and preferred setup in PostgreSQL for managing access cleanly.
+
+--  This query will list all row-level security policies on tables in the public schema
+SELECT * FROM pg_policies WHERE tablename IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public');
+
+No row-level security (RLS) policies are currently defined.
+
