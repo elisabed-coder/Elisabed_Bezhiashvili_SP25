@@ -1,0 +1,30 @@
+Task 4. Prepare Answers to the Following Questions
+How can one restrict access to certain columns of a database table?
+To restrict access to columns, we can use privileges. There are two types of privileges in PostgreSQL:
+
+Table-level: Grants the privilege on all columns in the table.
+
+Column-level: Grants the privilege on specific columns in the table.
+
+Example:
+
+GRANT SELECT (first_name, last_name) ON employees TO analyst;
+
+2.What is the difference between user identification and user authentication?
+The key difference between identification and authentication is that identification establishes the user's identity, it is the proof of users identity which is commonly managed by entering a password.
+3.What are the recommended authentication protocols for PostgreSQL?
+scram-sha-256 - The most secure password-based authentication method, recommended over md5
+Certificate-based authentication (cert) - Strongly recommended for high-security environments
+GSSAPI/Kerberos - Recommended for enterprise environments with existing Kerberos infrastructure
+peer - Recommended for local connections on Unix-like systems.
+4.What is proxy authentication in PostgreSQL and what is it for? Why does it make the previously discussed role-based access control easier to implement?
+
+Proxy authentication in PostgreSQL is a mechanism where one database user (the proxy user) can temporarily assume the identity and privileges of another database user (the target user) for a specific session. This feature is implemented via the SET ROLE or SET SESSION AUTHORIZATION commands.
+Why it makes role-based access control easier to implement:
+
+Connection pooling efficiency: Applications can maintain a pool of database connections but still enforce user-specific permissions without creating new connections for each user
+Simplified credential management: End users don't need direct database credentials; their authentication can be handled by the application layer
+Dynamic permission context: Applications can switch between different permission contexts (roles) without reconnecting to the database
+Separation of concerns: The application can handle user authentication while delegating authorization to the database's role system
+Audit trail accuracy: Database logs record which actual end user performed each action, maintaining accountability while using shared connections
+
